@@ -273,9 +273,9 @@ export interface SubagentStopHookOutput {
 export interface PreCompactHookInput {
 	/**
 	 * How the compaction was triggered.
-	 * "auto" when the conversation is too long for the prompt budget.
+	 * "auto" for budget-based compaction · "manual" for /compact · "event" for file-triggered compaction.
 	 */
-	readonly trigger: 'auto';
+	readonly trigger: 'auto' | 'manual' | 'event';
 	/**
 	 * Custom instructions for the compaction, if any.
 	 */

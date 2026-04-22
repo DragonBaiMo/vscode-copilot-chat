@@ -687,6 +687,12 @@ export namespace ConfigKey {
 
 		/** Simulate GitHub authentication failures for testing. Can't be TeamInternal because we lose these flags as part of testing. */
 		export const DebugGitHubAuthFailWith = defineSetting<'NotAuthorized' | 'RequestFailed' | 'ParseFailed' | 'HTTP401' | 'RateLimited' | 'GitHubLoginFailed' | null>('chat.debug.githubAuthFailWith', ConfigType.Simple, null);
+		export const CompactPromptOverrideEnabled = defineSetting<boolean>('chat.compactPromptOverride.enabled', ConfigType.Simple, false);
+		export const CompactPromptOverrideMode = defineSetting<'replace' | 'append'>('chat.compactPromptOverride.mode', ConfigType.Simple, 'replace');
+		export const InterruptGateEnabled = defineSetting<boolean>('chat.interruptGate.enabled', ConfigType.Simple, false);
+		export const InterruptGateTimeoutSeconds = defineSetting<number>('chat.interruptGate.timeoutSeconds', ConfigType.Simple, 300);
+		export const EventCompactTriggerEnabled = defineSetting<boolean>('chat.eventCompactTrigger.enabled', ConfigType.Simple, false);
+		export const EventCompactTriggerCooldownSeconds = defineSetting<number>('chat.eventCompactTrigger.cooldownSeconds', ConfigType.Simple, 60);
 
 		// Agent debug logging settings — fileLogging.enabled is the canonical toggle
 		/** @deprecated Use ChatDebugFileLogging instead. Kept during experiment transition. */

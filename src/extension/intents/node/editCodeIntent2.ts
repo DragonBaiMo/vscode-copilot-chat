@@ -22,6 +22,7 @@ import { ITelemetryService } from '../../../platform/telemetry/common/telemetry'
 import { IWorkspaceService } from '../../../platform/workspace/common/workspaceService';
 import { IInstantiationService } from '../../../util/vs/platform/instantiation/common/instantiation';
 import { ICommandService } from '../../commands/node/commandService';
+import { ICompactPromptOverrideResolver, IEventCompactTriggerService, IPendingUserGateService } from '../../compact/common/types';
 import { IIntent, IntentLinkificationOptions } from '../../prompt/node/intents';
 import { ICodeMapperService } from '../../prompts/node/codeMapper/codeMapperService';
 import { EditCodePrompt2 } from '../../prompts/node/panel/editCodePrompt2';
@@ -88,9 +89,12 @@ export class EditCode2IntentInvocation extends AgentIntentInvocation {
 		@ILogService logService: ILogService,
 		@IExperimentationService expService: IExperimentationService,
 		@IAutomodeService automodeService: IAutomodeService,
+		@ICompactPromptOverrideResolver compactPromptOverrideResolver: ICompactPromptOverrideResolver,
+		@IEventCompactTriggerService eventCompactTriggerService: IEventCompactTriggerService,
+		@IPendingUserGateService pendingUserGateService: IPendingUserGateService,
 		@IOTelService otelService: IOTelService,
 	) {
-		super(intent, location, endpoint, request, intentOptions, instantiationService, codeMapperService, envService, promptPathRepresentationService, endpointProvider, workspaceService, toolsService, configurationService, editLogService, commandService, telemetryService, notebookService, logService, expService, automodeService, otelService);
+		super(intent, location, endpoint, request, intentOptions, instantiationService, codeMapperService, envService, promptPathRepresentationService, endpointProvider, workspaceService, toolsService, configurationService, editLogService, commandService, telemetryService, notebookService, logService, expService, automodeService, compactPromptOverrideResolver, eventCompactTriggerService, pendingUserGateService, otelService);
 	}
 
 	public override async getAvailableTools(): Promise<vscode.LanguageModelToolInformation[]> {

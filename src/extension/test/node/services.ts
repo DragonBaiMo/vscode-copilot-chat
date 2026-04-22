@@ -63,6 +63,7 @@ import { MockClaudeCodeModels } from '../../chatSessions/claude/node/test/mockCl
 import { MockClaudeCodeSdkService } from '../../chatSessions/claude/node/test/mockClaudeCodeSdkService';
 import { MockClaudeToolPermissionService } from '../../chatSessions/claude/node/test/mockClaudeToolPermissionService';
 import { CommandServiceImpl, ICommandService } from '../../commands/node/commandService';
+import { ICompactPromptOverrideResolver, IEventCompactTriggerService, IPendingUserGateService, type CompactOverrideResult, type GateToolCallResult, type PendingUserGate, type EventCompactTriggerState } from '../../compact/common/types';
 import { IPromptWorkspaceLabels, PromptWorkspaceLabels } from '../../context/node/resolvers/promptWorkspaceLabels';
 import { ILinkifyService, LinkifyService } from '../../linkify/common/linkifyService';
 import { IPowerService, NullPowerService } from '../../power/common/powerService';
@@ -164,6 +165,9 @@ export function createExtensionUnitTestingServices(disposables: Pick<DisposableS
 	testingServiceCollection.define(IChatWebSocketManager, new SyncDescriptor(NullChatWebSocketManager));
 	testingServiceCollection.define(ISimilarFilesContextService, new SyncDescriptor(NullSimilarFilesContextService));
 	testingServiceCollection.define(IAutomodeService, new SyncDescriptor(NullAutomodeService));
+	testingServiceCollection.define(ICompactPromptOverrideResolver, new SyncDescriptor(NullCompactPromptOverrideResolver));
+	testingServiceCollection.define(IPendingUserGateService, new SyncDescriptor(NullPendingUserGateService));
+	testingServiceCollection.define(IEventCompactTriggerService, new SyncDescriptor(NullEventCompactTriggerService));
 	return testingServiceCollection;
 }
 
@@ -201,4 +205,48 @@ class NullAutomodeService implements IAutomodeService {
 	}
 
 	invalidateRouterCache(): void { }
+}
+
+class NullCompactPromptOverrideResolver implements ICompactPromptOverrideResolver {
+	declare readonly _serviceBrand: undefined;
+
+	async resolve(): Promise<CompactOverrideResult | undefined> {
+		return undefined;
+	}
+}
+
+class NullPendingUserGateService implements IPendingUserGateService {
+	declare readonly _serviceBrand: undefined;
+
+	createGate(): void { }
+
+	getGate(): PendingUserGate | undefined {
+		return undefined;
+	}
+
+	isActive(): boolean {
+		return false;
+	}
+
+	onToolCallAttempted(): GateToolCallResult {
+		return { deny: false };
+	}
+
+	onUserPromptSubmitted(): void { }
+}
+
+class NullEventCompactTriggerService implements IEventCompactTriggerService {
+	declare readonly _serviceBrand: undefined;
+
+	onPostToolUse(): void { }
+
+	tryConsume(): boolean {
+		return false;
+	}
+
+	onCompactCompleted(): void { }
+
+	getState(): EventCompactTriggerState {
+		return 'idle';
+	}
 }

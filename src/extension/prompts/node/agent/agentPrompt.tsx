@@ -25,6 +25,7 @@ import { isDefined, isString } from '../../../../util/vs/base/common/types';
 import { URI } from '../../../../util/vs/base/common/uri';
 import { IInstantiationService } from '../../../../util/vs/platform/instantiation/common/instantiation';
 import { ChatRequestEditedFileEventKind, Position, Range } from '../../../../vscodeTypes';
+import { CompactOverrideMode } from '../../../compact/common/types';
 import { GenericBasePromptElementProps } from '../../../context/node/resolvers/genericPanelIntentInvocation';
 import { ChatVariablesCollection, extractDebugTargetSessionIds, isCustomizationsIndex } from '../../../prompt/common/chatVariablesCollection';
 import { getGlobalContextCacheKey, GlobalContextMessageMetadata, RenderedUserMessageMetadata, Turn } from '../../../prompt/common/conversation';
@@ -68,6 +69,12 @@ export interface AgentPromptProps extends GenericBasePromptElementProps {
 	 * Enables cache breakpoints and summarization
 	 */
 	readonly enableCacheBreakpoints?: boolean;
+	readonly summarizationInstructions?: string;
+	readonly compactOverride?: {
+		readonly content: string;
+		readonly mode: CompactOverrideMode;
+	};
+	readonly compactTrigger?: 'auto' | 'manual' | 'event';
 
 	/**
 	 * Codesearch mode, aka agentic Ask mode
@@ -159,6 +166,9 @@ export class AgentPrompt extends PromptElement<AgentPromptProps> {
 					endpoint={this.props.endpoint}
 					tools={this.props.promptContext.tools?.availableTools}
 					enableCacheBreakpoints={this.props.enableCacheBreakpoints}
+					summarizationInstructions={this.props.summarizationInstructions}
+					compactOverride={this.props.compactOverride}
+					compactTrigger={this.props.compactTrigger}
 					summarizationSource={this.props.summarizationSource}
 					userQueryTagName={userQueryTagName}
 					ReminderInstructionsClass={ReminderInstructionsClass}

@@ -16,6 +16,7 @@ import { ITelemetryService } from '../../../platform/telemetry/common/telemetry'
 import { raceTimeout } from '../../../util/vs/base/common/async';
 import { CancellationToken } from '../../../util/vs/base/common/cancellation';
 import { StopWatch } from '../../../util/vs/base/common/stopwatch';
+import { IPendingUserGateService } from '../../compact/common/types';
 import { formatHookErrorMessage, processHookResults } from '../../intents/node/hookResultProcessor';
 import { IToolsService, isToolValidationError } from '../../tools/common/toolsService';
 import { ChatHookTelemetry } from './chatHookTelemetry';
@@ -59,6 +60,7 @@ export class ChatHookService implements IChatHookService {
 		@IHooksOutputChannel private readonly _outputChannel: IHooksOutputChannel,
 		@ITelemetryService telemetryService: ITelemetryService,
 		@IToolsService private readonly _toolsService: IToolsService,
+		@IPendingUserGateService private readonly _pendingUserGateService: IPendingUserGateService,
 		@IOTelService private readonly _otelService: IOTelService,
 	) {
 		this._telemetry = new ChatHookTelemetry(telemetryService);
@@ -335,6 +337,22 @@ export class ChatHookService implements IChatHookService {
 			tool_input: toolInput,
 			tool_use_id: toolCallId,
 		};
+
+		let earlyAdditionalContext: string[] = [];
+		if (sessionId) {
+			const gateResult = this._pendingUserGateService.onToolCallAttempted(sessionId);
+			if (gateResult.deny) {
+				return {
+					permissionDecision: 'deny',
+					permissionDecisionReason: 'Interrupt gate: waiting for user response',
+					additionalContext: gateResult.additionalContext,
+				};
+			}
+
+			if (gateResult.additionalContext?.length) {
+				earlyAdditionalContext = gateResult.additionalContext;
+			}
+		}
 		const results = await this.executeHook(
 			'PreToolUse',
 			hooks,
@@ -352,7 +370,7 @@ export class ChatHookService implements IChatHookService {
 		let mostRestrictiveDecision: 'allow' | 'deny' | 'ask' | undefined;
 		let winningReason: string | undefined;
 		let lastUpdatedInput: object | undefined;
-		const allAdditionalContext: string[] = [];
+		const allAdditionalContext: string[] = [...earlyAdditionalContext];
 
 		processHookResults({
 			hookType: 'PreToolUse',

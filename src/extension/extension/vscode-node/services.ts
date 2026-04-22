@@ -52,6 +52,7 @@ import { ILanguageContextService } from '../../../platform/languageServer/common
 import { ICompletionsFetchService } from '../../../platform/nesFetch/common/completionsFetchService';
 import { CompletionsFetchService } from '../../../platform/nesFetch/node/completionsFetchServiceImpl';
 import { IFetcherService } from '../../../platform/networking/common/fetcherService';
+import { IToolDeferralService } from '../../../platform/networking/common/toolDeferralService';
 import { ChatWebSocketManager, IChatWebSocketManager } from '../../../platform/networking/node/chatWebSocketManager';
 import { FetcherService } from '../../../platform/networking/vscode-node/fetcherServiceImpl';
 import { resolveOTelConfig } from '../../../platform/otel/common/otelConfig';
@@ -98,6 +99,10 @@ import { ChatHookService } from '../../chat/vscode-node/chatHookService';
 import { HooksOutputChannel } from '../../chat/vscode-node/hooksOutputChannel';
 import { SessionTranscriptService } from '../../chat/vscode-node/sessionTranscriptService';
 import { CommandServiceImpl, ICommandService } from '../../commands/node/commandService';
+import { CompactPromptOverrideResolver } from '../../compact/common/compactPromptOverrideResolver';
+import { EventCompactTriggerService } from '../../compact/common/eventCompactTriggerService';
+import { PendingUserGateService } from '../../compact/common/pendingUserGateService';
+import { ICompactPromptOverrideResolver, IEventCompactTriggerService, IPendingUserGateService } from '../../compact/common/types';
 import { ICopilotInlineCompletionItemProviderService } from '../../completions/common/copilotInlineCompletionItemProviderService';
 import { CopilotInlineCompletionItemProviderService } from '../../completions/vscode-node/copilotInlineCompletionItemProviderService';
 import { ApiEmbeddingsIndex, IApiEmbeddingsIndex } from '../../context/node/resolvers/extensionApi';
@@ -137,7 +142,6 @@ import { FixCookbookService, IFixCookbookService } from '../../prompts/node/inli
 import { WorkspaceMutationManager } from '../../testing/node/setupTestsFileManager';
 import { AgentMemoryService, IAgentMemoryService } from '../../tools/common/agentMemoryService';
 import { IMemoryCleanupService, MemoryCleanupService } from '../../tools/common/memoryCleanupService';
-import { IToolDeferralService } from '../../../platform/networking/common/toolDeferralService';
 import { ToolDeferralService } from '../../tools/common/toolDeferralService';
 import { IToolsService } from '../../tools/common/toolsService';
 import { ToolsService } from '../../tools/vscode-node/toolsService';
@@ -264,6 +268,9 @@ export function registerServices(builder: IInstantiationServiceBuilder, extensio
 	builder.define(ISimilarFilesContextService, new SyncDescriptor(SimilarFilesContextService));
 	builder.define(IGitHubOrgChatResourcesService, new SyncDescriptor(GitHubOrgChatResourcesService));
 	builder.define(IToolResultContentRenderer, new SyncDescriptor(ToolResultContentRenderer));
+	builder.define(ICompactPromptOverrideResolver, new SyncDescriptor(CompactPromptOverrideResolver));
+	builder.define(IPendingUserGateService, new SyncDescriptor(PendingUserGateService));
+	builder.define(IEventCompactTriggerService, new SyncDescriptor(EventCompactTriggerService));
 
 	// OTel SQLite store — created lazily, DB file only appears when dbSpanExporter.enabled is true
 	const otelDbPath = extensionContext.globalStorageUri

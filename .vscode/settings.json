@@ -141,5 +141,6 @@
 		".github/skills/.local": true,
 		".agents/skills/.local": true,
 		".claude/skills/.local": true,
-	}
+	},
+	"tasksync.maxConsecutiveAutoResponses": 50
 }

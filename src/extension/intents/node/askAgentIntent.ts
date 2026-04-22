@@ -22,6 +22,7 @@ import { CancellationToken } from '../../../util/vs/base/common/cancellation';
 import { IInstantiationService } from '../../../util/vs/platform/instantiation/common/instantiation';
 import { ICommandService } from '../../commands/node/commandService';
 import { Intent } from '../../common/constants';
+import { ICompactPromptOverrideResolver, IEventCompactTriggerService, IPendingUserGateService } from '../../compact/common/types';
 import { Conversation } from '../../prompt/common/conversation';
 import { getRequestedToolCallIterationLimit } from '../../prompt/common/specialRequestTypes';
 import { ChatTelemetryBuilder } from '../../prompt/node/chatParticipantTelemetry';
@@ -127,9 +128,12 @@ export class AskAgentIntentInvocation extends AgentIntentInvocation {
 		@ILogService logService: ILogService,
 		@IExperimentationService expService: IExperimentationService,
 		@IAutomodeService automodeService: IAutomodeService,
+		@ICompactPromptOverrideResolver compactPromptOverrideResolver: ICompactPromptOverrideResolver,
+		@IEventCompactTriggerService eventCompactTriggerService: IEventCompactTriggerService,
+		@IPendingUserGateService pendingUserGateService: IPendingUserGateService,
 		@IOTelService otelService: IOTelService,
 	) {
-		super(intent, location, endpoint, request, { processCodeblocks: true }, instantiationService, codeMapperService, envService, promptPathRepresentationService, endpointProvider, workspaceService, toolsService, configurationService, editLogService, commandService, telemetryService, notebookService, logService, expService, automodeService, otelService);
+		super(intent, location, endpoint, request, { processCodeblocks: true }, instantiationService, codeMapperService, envService, promptPathRepresentationService, endpointProvider, workspaceService, toolsService, configurationService, editLogService, commandService, telemetryService, notebookService, logService, expService, automodeService, compactPromptOverrideResolver, eventCompactTriggerService, pendingUserGateService, otelService);
 	}
 
 	public override async getAvailableTools(): Promise<vscode.LanguageModelToolInformation[]> {

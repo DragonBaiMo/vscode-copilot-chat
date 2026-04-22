@@ -32,6 +32,7 @@ import { URI, UriComponents } from '../../../../util/vs/base/common/uri';
 import { IInstantiationService, ServicesAccessor } from '../../../../util/vs/platform/instantiation/common/instantiation';
 import { ServiceCollection } from '../../../../util/vs/platform/instantiation/common/serviceCollection';
 import { LanguageModelDataPart, LanguageModelDataPart2, LanguageModelPartAudience, LanguageModelPromptTsxPart, LanguageModelTextPart, LanguageModelTextPart2, LanguageModelToolMCPSource, LanguageModelToolResult } from '../../../../vscodeTypes';
+import { IEventCompactTriggerService } from '../../../compact/common/types';
 import { isImageDataPart } from '../../../conversation/common/languageModelChatMessageHelpers';
 import { IResultMetadata } from '../../../prompt/common/conversation';
 import { IBuildPromptContext, IToolCall, IToolCallRound } from '../../../prompt/common/intents';
@@ -196,6 +197,7 @@ function buildToolResultElement(accessor: ServicesAccessor, props: ToolResultOpt
 	const promptContext: IBuildPromptContext = accessor.get(IBuildPromptContext);
 	const sessionTranscriptService = accessor.get(ISessionTranscriptService);
 	const chatHookService = accessor.get(IChatHookService);
+	const eventCompactTriggerService = accessor.get(IEventCompactTriggerService);
 	const otelService = accessor.get(IOTelService);
 	const tool = toolsService.getTool(props.toolCall.name);
 
@@ -289,7 +291,7 @@ function buildToolResultElement(accessor: ServicesAccessor, props: ToolResultOpt
 					sendInvokedToolTelemetry(promptEndpoint.acquireTokenizer(), telemetryService, props.toolCall.name, toolResult);
 
 					// Run hook context handling after tool execution
-					appendHookContext(toolResult, hookResult, chatHookService, props, inputObj, promptContext);
+					appendHookContext(toolResult, hookResult, chatHookService, eventCompactTriggerService, props, inputObj, promptContext);
 
 					if (transcriptSessionId) {
 						sessionTranscriptService.logToolExecutionComplete(transcriptSessionId, props.toolCall.id, true);
@@ -497,6 +499,7 @@ async function appendHookContext(
 	toolResult: LanguageModelToolResult2,
 	preHookResult: IPreToolUseHookResult | undefined,
 	chatHookService: IChatHookService,
+	eventCompactTriggerService: IEventCompactTriggerService,
 	props: ToolResultOpts,
 	toolInput: unknown,
 	promptContext: IBuildPromptContext,
@@ -534,6 +537,12 @@ async function appendHookContext(
 			toolResult.content.push(new LanguageModelTextPart('\n<PostToolUse-context>\n' + context + '\n</PostToolUse-context>'));
 		}
 	}
+
+	eventCompactTriggerService.onPostToolUse(
+		promptContext.conversation?.sessionId,
+		props.toolCall.name,
+		toolInput,
+	);
 }
 
 function toolResultToText(result: LanguageModelToolResult2): string {

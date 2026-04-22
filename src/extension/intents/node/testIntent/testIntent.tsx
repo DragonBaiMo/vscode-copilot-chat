@@ -27,6 +27,7 @@ import { URI } from '../../../../util/vs/base/common/uri';
 import { IInstantiationService } from '../../../../util/vs/platform/instantiation/common/instantiation';
 import { Position, Range, Selection } from '../../../../vscodeTypes';
 import { Intent } from '../../../common/constants';
+import { IPendingUserGateService } from '../../../compact/common/types';
 import { Conversation } from '../../../prompt/common/conversation';
 import { ChatTelemetryBuilder } from '../../../prompt/node/chatParticipantTelemetry';
 import { DefaultIntentRequestHandler } from '../../../prompt/node/defaultIntentRequestHandler';
@@ -243,8 +244,9 @@ class RequestHandler extends DefaultIntentRequestHandler {
 		@IChatHookService chatHookService: IChatHookService,
 		@IOctoKitService octoKitService: IOctoKitService,
 		@IConfigurationService configurationService: IConfigurationService,
+		@IPendingUserGateService pendingUserGateService: IPendingUserGateService,
 	) {
-		super(intent, conversation, request, stream, token, documentContext, location, chatTelemetry, undefined, undefined, instantiationService, conversationOptions, telemetryService, logService, surveyService, requestLogger, editSurvivalTrackerService, authenticationService, chatHookService, octoKitService, configurationService);
+		super(intent, conversation, request, stream, token, documentContext, location, chatTelemetry, undefined, undefined, instantiationService, conversationOptions, telemetryService, logService, surveyService, requestLogger, editSurvivalTrackerService, authenticationService, chatHookService, octoKitService, configurationService, pendingUserGateService);
 	}
 
 	/**

@@ -36,6 +36,7 @@ import { IInstantiationService, ServicesAccessor } from '../../../util/vs/platfo
 import { ChatResponseProgressPart2 } from '../../../vscodeTypes';
 import { ICommandService } from '../../commands/node/commandService';
 import { Intent } from '../../common/constants';
+import { ICompactPromptOverrideResolver, IEventCompactTriggerService, IPendingUserGateService } from '../../compact/common/types';
 import { ChatVariablesCollection } from '../../prompt/common/chatVariablesCollection';
 import { Conversation, normalizeSummariesOnRounds, RenderedUserMessageMetadata, TurnStatus } from '../../prompt/common/conversation';
 import { IBuildPromptContext } from '../../prompt/common/intents';
@@ -188,6 +189,7 @@ export class AgentIntent extends EditCodeIntent {
 		@IWorkspaceService workspaceService: IWorkspaceService,
 		@IChatSessionService chatSessionService: IChatSessionService,
 		@IAutomodeService private readonly _automodeService: IAutomodeService,
+		@ICompactPromptOverrideResolver private readonly _compactPromptOverrideResolver: ICompactPromptOverrideResolver,
 	) {
 		super(instantiationService, endpointProvider, configurationService, expService, codeMapperService, workspaceService, { intentInvocation: AgentIntentInvocation, processCodeblocks: false });
 		chatSessionService.onDidDisposeChatSession(sessionId => {
@@ -282,6 +284,7 @@ export class AgentIntent extends EditCodeIntent {
 			});
 
 			stream.progress(l10n.t('Compacting conversation...'));
+			const compactOverride = await this._compactPromptOverrideResolver.resolve(conversation.sessionId);
 
 			const progress: vscode.Progress<vscode.ChatResponseReferencePart | vscode.ChatResponseProgressPart> = {
 				report: () => { }
@@ -290,6 +293,8 @@ export class AgentIntent extends EditCodeIntent {
 				...propsInfo.props,
 				triggerSummarize: true,
 				summarizationInstructions: request.prompt || undefined,
+				compactOverride,
+				compactTrigger: 'manual',
 			});
 			const result = await renderer.render(progress, token);
 			const summaryMetadata = result.metadata.get(SummarizedConversationHistoryMetadata);
@@ -377,6 +382,9 @@ export class AgentIntentInvocation extends EditCodeIntentInvocation implements I
 		@ILogService private readonly logService: ILogService,
 		@IExperimentationService private readonly expService: IExperimentationService,
 		@IAutomodeService private readonly automodeService: IAutomodeService,
+		@ICompactPromptOverrideResolver private readonly _compactPromptOverrideResolver: ICompactPromptOverrideResolver,
+		@IEventCompactTriggerService private readonly _eventCompactTriggerService: IEventCompactTriggerService,
+		@IPendingUserGateService private readonly _pendingUserGateService: IPendingUserGateService,
 		@IOTelService override readonly otelService: IOTelService,
 	) {
 		super(intent, location, endpoint, request, intentOptions, instantiationService, codeMapperService, envService, promptPathRepresentationService, endpointProvider, workspaceService, toolsService, configurationService, editLogService, commandService, telemetryService, notebookService, otelService);
@@ -447,6 +455,26 @@ export class AgentIntentInvocation extends EditCodeIntentInvocation implements I
 			enableCacheBreakpoints: summarizationEnabled,
 			...this.extraPromptProps,
 			customizations: this._resolvedCustomizations
+		};
+		const sessionId = promptContext.conversation?.sessionId;
+		const compactOverridePromises = new Map<string, Promise<Awaited<ReturnType<ICompactPromptOverrideResolver['resolve']>>>>();
+		const getCompactRenderProps = async (compactTrigger: 'auto' | 'event', renderProps: AgentPromptProps = props): Promise<AgentPromptProps> => {
+			const renderSessionId = renderProps.promptContext.conversation?.sessionId;
+			if (!renderSessionId) {
+				return { ...renderProps, compactTrigger };
+			}
+
+			let compactOverridePromise = compactOverridePromises.get(renderSessionId);
+			if (!compactOverridePromise) {
+				compactOverridePromise = this._compactPromptOverrideResolver.resolve(renderSessionId);
+				compactOverridePromises.set(renderSessionId, compactOverridePromise);
+			}
+
+			return {
+				...renderProps,
+				compactOverride: await compactOverridePromise,
+				compactTrigger,
+			};
 		};
 
 		// ── Background compaction: dual-threshold approach ────────────────
@@ -559,7 +587,7 @@ export class AgentIntentInvocation extends EditCodeIntentInvocation implements I
 		};
 
 		// Helper function for synchronous summarization flow with fallbacks
-		const renderWithSummarization = async (reason: string, renderProps: AgentPromptProps = props): Promise<RenderPromptResult> => {
+		const renderWithSummarization = async (reason: string, renderProps: AgentPromptProps = props, compactTrigger: 'auto' | 'event' = 'auto'): Promise<RenderPromptResult> => {
 			// Check if a previous foreground summarization already failed in this
 			// turn.  The metadata is set on the turn returned by getLatestTurn(),
 			// which is the same turn throughout a single buildPrompt call since
@@ -583,10 +611,11 @@ export class AgentIntentInvocation extends EditCodeIntentInvocation implements I
 
 			this.logService.debug(`[Agent] ${reason}, triggering summarization`);
 			try {
+				const compactRenderProps = await getCompactRenderProps(compactTrigger, renderProps);
 				const renderer = PromptRenderer.create(this.instantiationService, this.endpoint, this.prompt, {
-					...renderProps,
+					...compactRenderProps,
 					endpoint: this.endpoint,
-					promptContext: renderProps.promptContext,
+					promptContext: compactRenderProps.promptContext,
 					triggerSummarize: true,
 				});
 				return await renderer.render(progress, token);
@@ -624,88 +653,98 @@ export class AgentIntentInvocation extends EditCodeIntentInvocation implements I
 		// Helper function for inline summarization — appends summarize instruction
 		// as a user message in the agent loop instead of making a separate LLM call.
 		// Returns the render result with InlineSummarizationRequestedMetadata set.
-		const renderWithInlineSummarization = async (reason: string, renderProps: AgentPromptProps = props): Promise<RenderPromptResult> => {
+		const renderWithInlineSummarization = async (reason: string, renderProps: AgentPromptProps = props, compactTrigger: 'auto' | 'event' = 'auto'): Promise<RenderPromptResult> => {
 			this.logService.debug(`[Agent] ${reason}, triggering inline summarization`);
 			try {
+				const compactRenderProps = await getCompactRenderProps(compactTrigger, renderProps);
 				// Expand from the *base* endpoint (not renderProps.endpoint which may already be expanded)
 				const expandedEndpoint = endpoint.cloneWithTokenOverride(endpoint.modelMaxPromptTokens * INLINE_SUMMARIZATION_BUDGET_EXPANSION);
 				const renderer = PromptRenderer.create(this.instantiationService, expandedEndpoint, this.prompt, {
-					...renderProps,
+					...compactRenderProps,
 					endpoint: expandedEndpoint,
 					inlineSummarization: true,
 				});
 				return await renderer.render(progress, token);
 			} catch (e) {
 				this.logService.error(e, `[Agent] inline summarization render failed, falling back to separate-call summarization`);
-				return await renderWithSummarization(`inline summarization failed (${e instanceof Error ? e.message : e}), falling back`, renderProps);
+				return await renderWithSummarization(`inline summarization failed (${e instanceof Error ? e.message : e}), falling back`, renderProps, compactTrigger);
 			}
 		};
 
 		const contextLengthBefore = this._lastRenderTokenCount;
 
-		try {
-			const renderEndpoint = proactiveInlineSummarization
-				? endpoint.cloneWithTokenOverride(endpoint.modelMaxPromptTokens * INLINE_SUMMARIZATION_BUDGET_EXPANSION)
-				: endpoint;
-			const renderProps: AgentPromptProps = proactiveInlineSummarization
-				? { ...props, endpoint: renderEndpoint, inlineSummarization: true }
-				: props;
-			const renderer = PromptRenderer.create(this.instantiationService, renderEndpoint, this.prompt, renderProps);
-			result = await renderer.render(progress, token);
-		} catch (e) {
-			if (e instanceof BudgetExceededError && summarizationEnabled) {
-				if (!promptContext.toolCallResults) {
-					promptContext = {
-						...promptContext,
-						toolCallResults: {}
-					};
-				}
-				e.metadata.getAll(ToolResultMetadata).forEach((metadata) => {
-					promptContext.toolCallResults![metadata.toolCallId] = metadata.result;
-				});
+		if (summarizationEnabled && !summaryAppliedThisIteration && sessionId && this._eventCompactTriggerService.tryConsume(sessionId, this._pendingUserGateService.isActive(sessionId))) {
+			this.logService.debug('[Agent] event-triggered compaction consumed before render');
+			result = inlineSummarizationEnabled
+				? await renderWithInlineSummarization('event-triggered compaction', props, 'event')
+				: await renderWithSummarization('event-triggered compaction', props, 'event');
+			this._eventCompactTriggerService.onCompactCompleted(sessionId);
+			summaryAppliedThisIteration = true;
+		} else {
+			try {
+				const renderEndpoint = proactiveInlineSummarization
+					? endpoint.cloneWithTokenOverride(endpoint.modelMaxPromptTokens * INLINE_SUMMARIZATION_BUDGET_EXPANSION)
+					: endpoint;
+				const renderProps: AgentPromptProps = proactiveInlineSummarization
+					? { ...props, endpoint: renderEndpoint, inlineSummarization: true }
+					: props;
+				const renderer = PromptRenderer.create(this.instantiationService, renderEndpoint, this.prompt, renderProps);
+				result = await renderer.render(progress, token);
+			} catch (e) {
+				if (e instanceof BudgetExceededError && summarizationEnabled) {
+					if (!promptContext.toolCallResults) {
+						promptContext = {
+							...promptContext,
+							toolCallResults: {}
+						};
+					}
+					e.metadata.getAll(ToolResultMetadata).forEach((metadata) => {
+						promptContext.toolCallResults![metadata.toolCallId] = metadata.result;
+					});
 
-				// If a background compaction is already running or completed,
-				// wait for / apply it instead of firing another LLM request.
-				if (backgroundSummarizer && (backgroundSummarizer.state === BackgroundSummarizationState.InProgress || backgroundSummarizer.state === BackgroundSummarizationState.Completed)) {
-					let budgetExceededTrigger: string;
-					if (backgroundSummarizer.state === BackgroundSummarizationState.InProgress) {
-						budgetExceededTrigger = 'budgetExceededWaited';
-						this.logService.debug(`[Agent] budget exceeded — waiting on in-progress background compaction instead of new request`);
-						const summaryPromise = backgroundSummarizer.waitForCompletion();
-						progress.report(new ChatResponseProgressPart2(l10n.t('Compacting conversation...'), async () => {
-							try { await summaryPromise; } catch { }
-							return l10n.t('Compacted conversation');
-						}));
-						await summaryPromise;
+					// If a background compaction is already running or completed,
+					// wait for / apply it instead of firing another LLM request.
+					if (backgroundSummarizer && (backgroundSummarizer.state === BackgroundSummarizationState.InProgress || backgroundSummarizer.state === BackgroundSummarizationState.Completed)) {
+						let budgetExceededTrigger: string;
+						if (backgroundSummarizer.state === BackgroundSummarizationState.InProgress) {
+							budgetExceededTrigger = 'budgetExceededWaited';
+							this.logService.debug(`[Agent] budget exceeded — waiting on in-progress background compaction instead of new request`);
+							const summaryPromise = backgroundSummarizer.waitForCompletion();
+							progress.report(new ChatResponseProgressPart2(l10n.t('Compacting conversation...'), async () => {
+								try { await summaryPromise; } catch { }
+								return l10n.t('Compacted conversation');
+							}));
+							await summaryPromise;
+						} else {
+							budgetExceededTrigger = 'budgetExceededReady';
+							this.logService.debug(`[Agent] budget exceeded — applying already-completed background compaction`);
+							progress.report(new ChatResponseProgressPart2(l10n.t('Compacted conversation'), async () => l10n.t('Compacted conversation')));
+						}
+						const bgResult = backgroundSummarizer.consumeAndReset();
+						if (bgResult) {
+							this.logService.debug(`[Agent] background compaction applied after budget exceeded (roundId=${bgResult.toolCallRoundId})`);
+							this._applySummaryToRounds(bgResult, promptContext);
+							this._persistSummaryOnTurn(bgResult, promptContext, contextLengthBefore);
+							this._sendBackgroundCompactionTelemetry(budgetExceededTrigger, 'applied', contextRatio, promptContext);
+							summaryAppliedThisIteration = true;
+							// Re-render with the compacted history
+							const renderer = PromptRenderer.create(this.instantiationService, endpoint, this.prompt, { ...props, promptContext });
+							result = await renderer.render(progress, token);
+						} else {
+							this.logService.debug(`[Agent] background compaction produced no usable result after budget exceeded — falling back to synchronous summarization`);
+							this._sendBackgroundCompactionTelemetry(budgetExceededTrigger, 'noResult', contextRatio, promptContext);
+							this._recordBackgroundCompactionFailure(promptContext, budgetExceededTrigger);
+							// Background compaction failed — fall back to synchronous summarization
+							result = await renderWithSummarization(`budget exceeded(${e.message}), background compaction failed`);
+						}
+					} else if (inlineSummarizationEnabled) {
+						result = await renderWithInlineSummarization(`budget exceeded(${e.message})`);
 					} else {
-						budgetExceededTrigger = 'budgetExceededReady';
-						this.logService.debug(`[Agent] budget exceeded — applying already-completed background compaction`);
-						progress.report(new ChatResponseProgressPart2(l10n.t('Compacted conversation'), async () => l10n.t('Compacted conversation')));
+						result = await renderWithSummarization(`budget exceeded(${e.message})`);
 					}
-					const bgResult = backgroundSummarizer.consumeAndReset();
-					if (bgResult) {
-						this.logService.debug(`[Agent] background compaction applied after budget exceeded (roundId=${bgResult.toolCallRoundId})`);
-						this._applySummaryToRounds(bgResult, promptContext);
-						this._persistSummaryOnTurn(bgResult, promptContext, contextLengthBefore);
-						this._sendBackgroundCompactionTelemetry(budgetExceededTrigger, 'applied', contextRatio, promptContext);
-						summaryAppliedThisIteration = true;
-						// Re-render with the compacted history
-						const renderer = PromptRenderer.create(this.instantiationService, endpoint, this.prompt, { ...props, promptContext });
-						result = await renderer.render(progress, token);
-					} else {
-						this.logService.debug(`[Agent] background compaction produced no usable result after budget exceeded — falling back to synchronous summarization`);
-						this._sendBackgroundCompactionTelemetry(budgetExceededTrigger, 'noResult', contextRatio, promptContext);
-						this._recordBackgroundCompactionFailure(promptContext, budgetExceededTrigger);
-						// Background compaction failed — fall back to synchronous summarization
-						result = await renderWithSummarization(`budget exceeded(${e.message}), background compaction failed`);
-					}
-				} else if (inlineSummarizationEnabled) {
-					result = await renderWithInlineSummarization(`budget exceeded(${e.message})`);
 				} else {
-					result = await renderWithSummarization(`budget exceeded(${e.message})`);
+					throw e;
 				}
-			} else {
-				throw e;
 			}
 		}
 
@@ -774,7 +813,7 @@ export class AgentIntentInvocation extends EditCodeIntentInvocation implements I
 				}
 			} else if (postRenderRatio >= 0.80 && (backgroundSummarizer.state === BackgroundSummarizationState.Idle || backgroundSummarizer.state === BackgroundSummarizationState.Failed)) {
 				// At ≥ 80% with no running compaction (or a previous failure) — kick off background work.
-				this._startBackgroundSummarization(backgroundSummarizer, props, token, postRenderRatio);
+				this._startBackgroundSummarization(backgroundSummarizer, await getCompactRenderProps('auto', props), token, postRenderRatio);
 			}
 		}
 

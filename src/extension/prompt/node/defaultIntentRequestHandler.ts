@@ -40,6 +40,7 @@ import { assertType, Mutable } from '../../../util/vs/base/common/types';
 import { IInstantiationService } from '../../../util/vs/platform/instantiation/common/instantiation';
 import { ChatResponseMarkdownPart, ChatResponseProgressPart, ChatResponseTextEditPart, LanguageModelToolResult2 } from '../../../vscodeTypes';
 import { CodeBlocksMetadata, CodeBlockTrackingChatResponseStream } from '../../codeBlocks/node/codeBlockProcessor';
+import { IPendingUserGateService } from '../../compact/common/types';
 import { CopilotInteractiveEditorResponse, InteractionOutcomeComputer } from '../../inlineChat/node/promptCraftingTypes';
 import { formatHookErrorMessage, HookAbortError, isHookAbortError, processHookResults } from '../../intents/node/hookResultProcessor';
 import { EmptyPromptError, IToolCallingBuiltPromptEvent, IToolCallingLoopOptions, IToolCallingResponseEvent, IToolCallLoopResult, ToolCallingLoop, ToolCallingLoopFetchOptions, ToolCallLimitBehavior } from '../../intents/node/toolCallingLoop';
@@ -102,6 +103,7 @@ export class DefaultIntentRequestHandler {
 		@IChatHookService private readonly _chatHookService: IChatHookService,
 		@IOctoKitService private readonly _octoKitService: IOctoKitService,
 		@IConfigurationService private readonly _configurationService: IConfigurationService,
+		@IPendingUserGateService private readonly _pendingUserGateService: IPendingUserGateService,
 	) {
 		// Initialize properties
 		this.turn = conversation.getLatestTurn();
@@ -356,6 +358,7 @@ export class DefaultIntentRequestHandler {
 		try {
 			// Execute start hooks first (SessionStart/SubagentStart), then UserPromptSubmit
 			await loop.runStartHooks(this.stream, this.token);
+			this._pendingUserGateService.onUserPromptSubmitted(this.conversation.sessionId, this.request.prompt);
 
 			const userPromptSubmitResults = await this._chatHookService.executeHook('UserPromptSubmit', this.request.hooks, { prompt: this.request.prompt } satisfies UserPromptSubmitHookInput, this.conversation.sessionId, this.token);
 			const additionalContexts: string[] = [];

@@ -25,6 +25,7 @@ import { generateUuid } from '../../../util/vs/base/common/uuid';
 import { IInstantiationService } from '../../../util/vs/platform/instantiation/common/instantiation';
 import { ICommandService } from '../../commands/node/commandService';
 import { Intent } from '../../common/constants';
+import { ICompactPromptOverrideResolver, IEventCompactTriggerService, IPendingUserGateService } from '../../compact/common/types';
 import { ChatVariablesCollection } from '../../prompt/common/chatVariablesCollection';
 import { IBuildPromptContext, InternalToolReference } from '../../prompt/common/intents';
 import { getRequestedToolCallIterationLimit } from '../../prompt/common/specialRequestTypes';
@@ -106,9 +107,12 @@ export class NotebookEditorIntentInvocation extends EditCode2IntentInvocation {
 		@ILogService logService: ILogService,
 		@IExperimentationService expService: IExperimentationService,
 		@IAutomodeService automodeService: IAutomodeService,
+		@ICompactPromptOverrideResolver compactPromptOverrideResolver: ICompactPromptOverrideResolver,
+		@IEventCompactTriggerService eventCompactTriggerService: IEventCompactTriggerService,
+		@IPendingUserGateService pendingUserGateService: IPendingUserGateService,
 		@IOTelService otelService: IOTelService,
 	) {
-		super(intent, location, endpoint, request, intentOptions, instantiationService, codeMapperService, envService, promptPathRepresentationService, endpointProvider, workspaceService, toolsService, configurationService, editLogService, commandService, telemetryService, notebookService, logService, expService, automodeService, otelService);
+		super(intent, location, endpoint, request, intentOptions, instantiationService, codeMapperService, envService, promptPathRepresentationService, endpointProvider, workspaceService, toolsService, configurationService, editLogService, commandService, telemetryService, notebookService, logService, expService, automodeService, compactPromptOverrideResolver, eventCompactTriggerService, pendingUserGateService, otelService);
 	}
 
 	protected override prompt = NotebookInlinePrompt;

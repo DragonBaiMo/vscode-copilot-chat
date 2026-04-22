@@ -30,6 +30,7 @@ import { StopWatch } from '../../../../util/vs/base/common/stopwatch';
 import { generateUuid } from '../../../../util/vs/base/common/uuid';
 import { IInstantiationService } from '../../../../util/vs/platform/instantiation/common/instantiation';
 import { ChatResponseProgressPart2 } from '../../../../vscodeTypes';
+import { CompactOverrideMode } from '../../../compact/common/types';
 import { ToolCallingLoop } from '../../../intents/node/toolCallingLoop';
 import { IResultMetadata } from '../../../prompt/common/conversation';
 import { IBuildPromptContext, IToolCallRound } from '../../../prompt/common/intents';
@@ -162,7 +163,16 @@ export class ConversationHistorySummarizationPrompt extends PromptElement<Conver
 		return (
 			<>
 				<SystemMessage priority={this.props.priority}>
-					{SummaryPrompt}
+					{this.props.compactOverride?.mode === 'replace'
+						? this.props.compactOverride.content
+						: <>
+							{SummaryPrompt}
+							{this.props.compactOverride?.content && <>
+								<br /><br />
+								## Custom compact instructions:<br />
+								{this.props.compactOverride.content}
+							</>}
+						</>}
 					{this.props.summarizationInstructions && <>
 						<br /><br />
 						## Additional instructions from the user:<br />
@@ -408,6 +418,11 @@ export interface SummarizedAgentHistoryProps extends BasePromptElementProps, Age
 	readonly maxSummaryTokens?: number;
 	/** Optional custom instructions to include in the summarization prompt */
 	readonly summarizationInstructions?: string;
+	readonly compactOverride?: {
+		readonly content: string;
+		readonly mode: CompactOverrideMode;
+	};
+	readonly compactTrigger?: 'auto' | 'manual' | 'event';
 	/** Whether this summarization was triggered as a background or foreground operation. Defaults to 'foreground'. */
 	readonly summarizationSource?: 'background' | 'foreground';
 }
@@ -489,7 +504,8 @@ export class SummarizedConversationHistory extends PromptElement<SummarizedAgent
 			<ConversationHistory
 				{...this.props}
 				promptContext={promptContext}
-				enableCacheBreakpoints={this.props.enableCacheBreakpoints} />
+				enableCacheBreakpoints={this.props.enableCacheBreakpoints}
+			/>
 			{inlineSummarizationRequested && <InlineSummarizationUserMessage priority={1000} endpoint={this.props.endpoint} />}
 		</>;
 	}
@@ -649,7 +665,7 @@ class ConversationHistorySummarizer {
 
 		try {
 			const results = await this.chatHookService.executeHook('PreCompact', hooks, {
-				trigger: 'auto',
+				trigger: this.props.compactTrigger ?? 'auto',
 			} satisfies PreCompactHookInput, this.props.promptContext.conversation?.sessionId, this.token ?? CancellationToken.None);
 
 			for (const result of results) {
