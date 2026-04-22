@@ -60,3 +60,18 @@ export interface IEventCompactTriggerService {
 	onCompactCompleted(sessionId: string): void;
 	getState(sessionId: string): EventCompactTriggerState;
 }
+
+/**
+ * Verbatim anchors captured at compaction time. Preserved alongside the compacted
+ * summary so the model retains the last pre-compaction model output and the most
+ * recent user signal without paraphrase drift.
+ */
+export interface ICompactVerbatimAnchors {
+	readonly lastUserSignal?: {
+		readonly source: 'direct-message' | 'ask-tool';
+		readonly toolName?: string;
+		readonly content: string;
+	};
+	readonly lastModelThinking?: string;
+	readonly lastModelReply?: string;
+}

@@ -30,7 +30,8 @@ import { StopWatch } from '../../../../util/vs/base/common/stopwatch';
 import { generateUuid } from '../../../../util/vs/base/common/uuid';
 import { IInstantiationService } from '../../../../util/vs/platform/instantiation/common/instantiation';
 import { ChatResponseProgressPart2 } from '../../../../vscodeTypes';
-import { CompactOverrideMode } from '../../../compact/common/types';
+import { LanguageModelTextPart, LanguageModelTextPart2 } from '../../../../vscodeTypes';
+import { CompactOverrideMode, ICompactVerbatimAnchors } from '../../../compact/common/types';
 import { ToolCallingLoop } from '../../../intents/node/toolCallingLoop';
 import { IResultMetadata } from '../../../prompt/common/conversation';
 import { IBuildPromptContext, IToolCallRound } from '../../../prompt/common/intents';
@@ -151,6 +152,130 @@ const SummaryPrompt = <>
 	This summary should serve as a comprehensive handoff document that enables seamless continuation of all active work streams while preserving the full technical and contextual richness of the original conversation.<br />
 </>;
 
+function truncateAnchor(text: string, maxChars: number): string {
+	if (!text) { return ''; }
+	if (text.length <= maxChars) { return text; }
+	return text.slice(0, maxChars) + '\n[truncated]';
+}
+
+/**
+ * Extract plain text from a tool result's content parts. Non-text parts (e.g. tsx parts)
+ * are stringified; avoids casting through `any`.
+ */
+function extractToolResultText(result: { content: ReadonlyArray<unknown> }): string {
+	const pieces: string[] = [];
+	for (const part of result.content) {
+		if (part instanceof LanguageModelTextPart || part instanceof LanguageModelTextPart2) {
+			pieces.push(part.value);
+		} else if (typeof part === 'string') {
+			pieces.push(part);
+		} else if (part && typeof part === 'object') {
+			const candidate = part as { value?: unknown };
+			if (typeof candidate.value === 'string') {
+				pieces.push(candidate.value);
+			} else {
+				pieces.push(JSON.stringify(part));
+			}
+		}
+	}
+	return pieces.join('\n');
+}
+
+/**
+ * Capture the last user signal + last model thinking/reply at compaction time so
+ * the post-compact prompt retains verbatim anchors. User signal priority:
+ * latest ask-* tool result in current tool-call rounds, then the user query.
+ */
+function extractVerbatimAnchors(promptContext: IBuildPromptContext, maxChars: number): ICompactVerbatimAnchors {
+	let lastModelThinking: string | undefined;
+	let lastModelReply: string | undefined;
+
+	const rounds = promptContext.toolCallRounds;
+	if (rounds && rounds.length > 0) {
+		const last = rounds[rounds.length - 1];
+		lastModelReply = last.response;
+		const t = last.thinking?.text;
+		lastModelThinking = Array.isArray(t) ? t.join('') : t;
+	} else if (promptContext.history.length > 0) {
+		const lastTurn = promptContext.history[promptContext.history.length - 1];
+		const lastRound = lastTurn.rounds[lastTurn.rounds.length - 1];
+		if (lastRound) {
+			lastModelReply = lastRound.response;
+			const t = lastRound.thinking?.text;
+			lastModelThinking = Array.isArray(t) ? t.join('') : t;
+		}
+	}
+
+	let lastUserSignal: ICompactVerbatimAnchors['lastUserSignal'];
+	if (rounds && promptContext.toolCallResults) {
+		outer: for (let i = rounds.length - 1; i >= 0 && !lastUserSignal; i--) {
+			const round = rounds[i];
+			for (let j = round.toolCalls.length - 1; j >= 0; j--) {
+				const call = round.toolCalls[j];
+				if (!call.name.toLowerCase().startsWith('ask')) { continue; }
+				const result = promptContext.toolCallResults[call.id];
+				if (!result) { continue; }
+				const content = extractToolResultText(result);
+				lastUserSignal = { source: 'ask-tool', toolName: call.name, content: truncateAnchor(content, maxChars) };
+				break outer;
+			}
+		}
+	}
+	if (!lastUserSignal && promptContext.query) {
+		lastUserSignal = { source: 'direct-message', content: truncateAnchor(promptContext.query, maxChars) };
+	}
+
+	return {
+		lastUserSignal,
+		lastModelThinking: lastModelThinking ? truncateAnchor(lastModelThinking, maxChars) : undefined,
+		lastModelReply: lastModelReply ? truncateAnchor(lastModelReply, maxChars) : undefined,
+	};
+}
+
+interface VerbatimAnchorsProps extends BasePromptElementProps {
+	readonly anchors: ICompactVerbatimAnchors;
+}
+
+/**
+ * Renders verbatim excerpts captured at compaction time as a dedicated UserMessage.
+ * Kept independent from the summary so the model sees these as first-party anchors
+ * that must not be rewritten by subsequent summarization.
+ */
+class VerbatimAnchors extends PromptElement<VerbatimAnchorsProps> {
+	override render() {
+		const { anchors } = this.props;
+		if (!anchors.lastUserSignal && !anchors.lastModelThinking && !anchors.lastModelReply) {
+			return <></>;
+		}
+		return (
+			<UserMessage>
+				<Tag name='verbatim-anchors'>
+					The following are verbatim excerpts captured at compaction time. They are provided to preserve continuity with the pre-compaction conversation and must not be rewritten or summarized away in subsequent turns.<br />
+					{anchors.lastUserSignal && <>
+						<br />
+						<Tag name='last-user-signal'>
+							Source: {anchors.lastUserSignal.source}{anchors.lastUserSignal.toolName ? ` (tool: ${anchors.lastUserSignal.toolName})` : ''}<br />
+							{anchors.lastUserSignal.content}
+						</Tag>
+					</>}
+					{anchors.lastModelThinking && <>
+						<br />
+						<Tag name='last-model-thinking'>
+							{anchors.lastModelThinking}
+						</Tag>
+					</>}
+					{anchors.lastModelReply && <>
+						<br />
+						<Tag name='last-model-reply'>
+							{anchors.lastModelReply}
+						</Tag>
+					</>}
+				</Tag>
+			</UserMessage>
+		);
+	}
+}
+
 /**
  * Prompt used to summarize conversation history when the context window is exceeded.
  */
@@ -232,6 +357,7 @@ class ConversationHistory extends PromptElement<SummarizedAgentHistoryProps> {
 		// Handle the possibility that we summarized partway through the current turn (e.g. if we accumulated many tool call rounds)
 		let summaryForCurrentTurn: string | undefined = undefined;
 		let thinkingForFirstRoundAfterSummarization: ThinkingData | undefined = undefined;
+		let verbatimAnchorsForCurrentTurn: ICompactVerbatimAnchors | undefined = undefined;
 		if (this.props.promptContext.toolCallRounds?.length) {
 			const toolCallRounds: IToolCallRound[] = [];
 			for (let i = this.props.promptContext.toolCallRounds.length - 1; i >= 0; i--) {
@@ -240,6 +366,7 @@ class ConversationHistory extends PromptElement<SummarizedAgentHistoryProps> {
 					// This tool call round was summarized
 					summaryForCurrentTurn = toolCallRound.summary;
 					thinkingForFirstRoundAfterSummarization = toolCallRound.thinking;
+					verbatimAnchorsForCurrentTurn = toolCallRound.verbatimAnchors;
 					break;
 				}
 				toolCallRounds.push(toolCallRound);
@@ -259,6 +386,9 @@ class ConversationHistory extends PromptElement<SummarizedAgentHistoryProps> {
 
 		if (summaryForCurrentTurn) {
 			history.push(<SummaryMessageElement endpoint={this.props.endpoint} summaryText={summaryForCurrentTurn} />);
+			if (verbatimAnchorsForCurrentTurn) {
+				history.push(<VerbatimAnchors priority={899} anchors={verbatimAnchorsForCurrentTurn} />);
+			}
 
 			return (<PrioritizedList priority={this.props.priority} descending={false} passPriority={true}>
 				{history.reverse()}
@@ -307,10 +437,12 @@ class ConversationHistory extends PromptElement<SummarizedAgentHistoryProps> {
 
 			// Find the latest tool call round that was summarized
 			const toolCallRounds: IToolCallRound[] = [];
+			let summaryRound: IToolCallRound | undefined;
 			for (let i = turn.rounds.length - 1; i >= 0; i--) {
 				const round = turn.rounds[i];
 				summaryForTurn = round.summary ? new SummarizedConversationHistoryMetadata(round.id, round.summary) : undefined;
 				if (summaryForTurn) {
+					summaryRound = round;
 					break;
 				}
 				toolCallRounds.push(round);
@@ -319,6 +451,9 @@ class ConversationHistory extends PromptElement<SummarizedAgentHistoryProps> {
 			if (summaryForTurn) {
 				// We have a summary for a tool call round that was part of this turn
 				turnComponents.push(<SummaryMessageElement endpoint={this.props.endpoint} summaryText={summaryForTurn.text} />);
+				if (summaryRound?.verbatimAnchors) {
+					turnComponents.push(<VerbatimAnchors priority={899} anchors={summaryRound.verbatimAnchors} />);
+				}
 			} else if (!turn.isContinuation) {
 				turnComponents.push(<AgentUserMessage flexGrow={1} {...getUserMessagePropsFromTurn(turn, this.props.endpoint, {
 					userQueryTagName: this.props.userQueryTagName,
@@ -363,6 +498,7 @@ export interface ISummarizedConversationHistoryMetadataOptions {
 	readonly source?: 'foreground' | 'background';
 	readonly outcome?: string;
 	readonly contextLengthBefore?: number;
+	readonly verbatimAnchors?: ICompactVerbatimAnchors;
 }
 
 export class SummarizedConversationHistoryMetadata extends PromptMetadata {
@@ -379,6 +515,7 @@ export class SummarizedConversationHistoryMetadata extends PromptMetadata {
 	public readonly source?: 'foreground' | 'background';
 	public readonly outcome?: string;
 	public readonly contextLengthBefore?: number;
+	public readonly verbatimAnchors?: ICompactVerbatimAnchors;
 
 	constructor(
 		toolCallRoundId: string,
@@ -399,6 +536,7 @@ export class SummarizedConversationHistoryMetadata extends PromptMetadata {
 		this.source = options?.source;
 		this.outcome = options?.outcome;
 		this.contextLengthBefore = options?.contextLengthBefore;
+		this.verbatimAnchors = options?.verbatimAnchors;
 	}
 }
 
@@ -489,8 +627,9 @@ export class SummarizedConversationHistory extends PromptElement<SummarizedAgent
 					numRounds: summResult.numRounds,
 					numRoundsSinceLastSummarization: summResult.numRoundsSinceLastSummarization,
 					durationMs: summResult.durationMs,
+					verbatimAnchors: summResult.verbatimAnchors,
 				});
-				this.addSummaryToHistory(summary, summResult.toolCallRoundId, summResult.thinking);
+				this.addSummaryToHistory(summary, summResult.toolCallRoundId, summResult.thinking, summResult.verbatimAnchors);
 			}
 		}
 
@@ -549,11 +688,12 @@ export class SummarizedConversationHistory extends PromptElement<SummarizedAgent
 		await this.sessionTranscriptService.startSession(sessionId, undefined, history.length > 0 ? history : undefined);
 	}
 
-	private addSummaryToHistory(summary: string, toolCallRoundId: string, thinking?: ThinkingData): void {
+	private addSummaryToHistory(summary: string, toolCallRoundId: string, thinking?: ThinkingData, verbatimAnchors?: ICompactVerbatimAnchors): void {
 		const round = this.props.promptContext.toolCallRounds?.find(round => round.id === toolCallRoundId);
 		if (round) {
 			round.summary = summary;
 			round.thinking = thinking;
+			round.verbatimAnchors = verbatimAnchors;
 			return;
 		}
 
@@ -564,6 +704,7 @@ export class SummarizedConversationHistory extends PromptElement<SummarizedAgent
 			if (round) {
 				round.summary = summary;
 				round.thinking = thinking;
+				round.verbatimAnchors = verbatimAnchors;
 				break;
 			}
 		}
@@ -600,7 +741,15 @@ class ConversationHistorySummarizer {
 		@IChatHookService private readonly chatHookService: IChatHookService,
 	) { }
 
-	async summarizeHistory(): Promise<{ summary: string; toolCallRoundId: string; thinking?: ThinkingData; usage?: APIUsage; promptTokenDetails?: readonly ChatResultPromptTokenDetail[]; model?: string; summarizationMode?: string; numRounds?: number; numRoundsSinceLastSummarization?: number; durationMs?: number }> {
+	async summarizeHistory(): Promise<{ summary: string; toolCallRoundId: string; thinking?: ThinkingData; usage?: APIUsage; promptTokenDetails?: readonly ChatResultPromptTokenDetail[]; model?: string; summarizationMode?: string; numRounds?: number; numRoundsSinceLastSummarization?: number; durationMs?: number; verbatimAnchors?: ICompactVerbatimAnchors }> {
+		// Capture verbatim anchors before any pre-compact hook runs so the snapshot reflects
+		// the true pre-compaction state, not anything a hook might mutate.
+		const verbatimAnchorsEnabled = this.configurationService.getConfig(ConfigKey.Advanced.VerbatimAnchorsEnabled);
+		const verbatimAnchorsMaxChars = this.configurationService.getConfig(ConfigKey.Advanced.VerbatimAnchorsMaxChars);
+		const verbatimAnchors = verbatimAnchorsEnabled
+			? extractVerbatimAnchors(this.props.promptContext, verbatimAnchorsMaxChars)
+			: undefined;
+
 		// Execute pre-compact hook before summarization to allow hooks to archive transcripts or perform cleanup
 		await this.executePreCompactHook();
 
@@ -628,6 +777,7 @@ class ConversationHistorySummarizer {
 			numRounds,
 			numRoundsSinceLastSummarization,
 			durationMs: summary.durationMs,
+			verbatimAnchors,
 		};
 	}
 

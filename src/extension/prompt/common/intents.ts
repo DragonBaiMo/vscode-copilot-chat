@@ -16,6 +16,7 @@ import { getToolName } from '../../tools/common/toolNames';
 import { IToolGrouping } from '../../tools/common/virtualTools/virtualToolTypes';
 import { ChatVariablesCollection } from './chatVariablesCollection';
 import { Conversation, Turn } from './conversation';
+import { ICompactVerbatimAnchors } from '../../compact/common/types';
 
 // TODO Move these to Conversation
 export interface IToolCall {
@@ -46,6 +47,8 @@ export interface IToolCallRound {
 	phase?: string;
 	/** The model ID that produced the phase value. */
 	phaseModelId?: string;
+	/** Verbatim anchors captured at compaction time: last model thinking/reply + last user signal. */
+	verbatimAnchors?: ICompactVerbatimAnchors;
 }
 
 export interface InternalToolReference extends vscode.ChatLanguageModelToolReference {

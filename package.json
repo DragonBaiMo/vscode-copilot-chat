@@ -4081,6 +4081,27 @@
 							"experimental"
 						]
 					},
+					"github.copilot.chat.compact.verbatimAnchors.enabled": {
+						"type": "boolean",
+						"default": true,
+						"scope": "resource",
+						"markdownDescription": "%github.copilot.config.compact.verbatimAnchors.enabled%",
+						"tags": [
+							"advanced",
+							"experimental"
+						]
+					},
+					"github.copilot.chat.compact.verbatimAnchors.maxChars": {
+						"type": "number",
+						"default": 8192,
+						"minimum": 1,
+						"scope": "resource",
+						"markdownDescription": "%github.copilot.config.compact.verbatimAnchors.maxChars%",
+						"tags": [
+							"advanced",
+							"experimental"
+						]
+					},
 					"github.copilot.chat.debug.promptOverrideFile": {
 						"type": [
 							"string",

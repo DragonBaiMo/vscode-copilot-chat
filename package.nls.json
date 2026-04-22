@@ -169,6 +169,8 @@
 	"github.copilot.config.interruptGate.timeoutSeconds": "How long an interrupt gate can wait for a user response before it expires, in seconds.",
 	"github.copilot.config.eventCompactTrigger.enabled": "Enable file-read events to arm an automatic compact pass.",
 	"github.copilot.config.eventCompactTrigger.cooldownSeconds": "Cooldown after an event-triggered compact before another file-read trigger can arm compact again, in seconds.",
+	"github.copilot.config.compact.verbatimAnchors.enabled": "启用后 compact 生成摘要时附带压缩前最后一轮模型 thinking/reply 与最近一次用户信号的原文锚点。",
+	"github.copilot.config.compact.verbatimAnchors.maxChars": "每条原文锚点的字符上限，超出则截断并标注 [truncated]，默认 8192。",
 	"github.copilot.config.gpt5CodexAlternatePrompt": "Specifies an experimental alternate prompt to use for the GPT-5-Codex model.",
 	"github.copilot.command.fixTestFailure": "Fix Test Failure",
 	"copilot.description": "Ask or edit in context",

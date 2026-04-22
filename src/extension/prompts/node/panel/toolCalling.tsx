@@ -399,13 +399,20 @@ interface IToolResultElementActualProps {
 class ToolResultElement extends PromptElement<IToolResultElementActualProps & BasePromptElementProps, void> {
 	async render(state: void, sizing: PromptSizing) {
 		const { extraMetadata, toolResult, isCancelled } = await this.props.call(sizing);
-		const toolResultElement = this.props.enableCacheBreakpoints ?
+		// ask-* tools carry user intent; bypass truncation and wrap in a user-intent tag so
+		// downstream compaction treats them as first-class user signals.
+		const isAskTool = this.props.toolCall.name.toLowerCase().startsWith('ask');
+		const effectiveTruncate = isAskTool ? undefined : this.props.truncateAt;
+		const rawToolResult = this.props.enableCacheBreakpoints ?
 			<>
 				<Chunk>
-					<ToolResult content={toolResult.content} truncate={this.props.truncateAt} toolCallId={this.props.toolCall.id} sessionId={this.props.sessionId} toolName={this.props.toolCall.name} />
+					<ToolResult content={toolResult.content} truncate={effectiveTruncate} toolCallId={this.props.toolCall.id} sessionId={this.props.sessionId} toolName={this.props.toolCall.name} />
 				</Chunk>
 			</> :
-			<ToolResult content={toolResult.content} truncate={this.props.truncateAt} toolCallId={this.props.toolCall.id} sessionId={this.props.sessionId} toolName={this.props.toolCall.name} />;
+			<ToolResult content={toolResult.content} truncate={effectiveTruncate} toolCallId={this.props.toolCall.id} sessionId={this.props.sessionId} toolName={this.props.toolCall.name} />;
+		const toolResultElement = isAskTool
+			? <Tag name='user-intent-from-tool'>{rawToolResult}</Tag>
+			: rawToolResult;
 
 		return (
 			<ToolMessage toolCallId={this.props.toolCall.id!}>

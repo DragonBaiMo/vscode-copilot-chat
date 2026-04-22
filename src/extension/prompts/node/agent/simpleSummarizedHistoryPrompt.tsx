@@ -105,12 +105,16 @@ export class SimpleSummarizedHistory extends PromptElement<SummarizedAgentHistor
 	}
 
 	private renderToolCall(toolCall: IToolCall, result: LanguageModelToolResult | undefined) {
-		return <ChunkTag name='tool'>
+		// ask-* tools carry user intent; bypass truncation and tag accordingly.
+		const isAskTool = toolCall.name.toLowerCase().startsWith('ask');
+		const truncateLen = isAskTool ? undefined : this.props.maxToolResultLength / 2;
+		const body = <ChunkTag name='tool'>
 			Used tool "{toolCall.name}" with arguments: {truncate(toolCall.arguments, 200)}<br />
 			{result ?
-				<ToolResult content={result.content} truncate={this.props.maxToolResultLength / 2} toolCallId={toolCall.id} sessionId={this.props.promptContext.request?.sessionId} /> :
+				<ToolResult content={result.content} truncate={truncateLen} toolCallId={toolCall.id} sessionId={this.props.promptContext.request?.sessionId} /> :
 				<>Tool result empty</>}
 		</ChunkTag>;
+		return isAskTool ? <Tag name='user-intent-from-tool'>{body}</Tag> : body;
 	}
 }
 

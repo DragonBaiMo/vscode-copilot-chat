@@ -693,6 +693,8 @@ export namespace ConfigKey {
 		export const InterruptGateTimeoutSeconds = defineSetting<number>('chat.interruptGate.timeoutSeconds', ConfigType.Simple, 300);
 		export const EventCompactTriggerEnabled = defineSetting<boolean>('chat.eventCompactTrigger.enabled', ConfigType.Simple, false);
 		export const EventCompactTriggerCooldownSeconds = defineSetting<number>('chat.eventCompactTrigger.cooldownSeconds', ConfigType.Simple, 60);
+		export const VerbatimAnchorsEnabled = defineSetting<boolean>('chat.compact.verbatimAnchors.enabled', ConfigType.Simple, true);
+		export const VerbatimAnchorsMaxChars = defineSetting<number>('chat.compact.verbatimAnchors.maxChars', ConfigType.Simple, 8192);
 
 		// Agent debug logging settings — fileLogging.enabled is the canonical toggle
 		/** @deprecated Use ChatDebugFileLogging instead. Kept during experiment transition. */
