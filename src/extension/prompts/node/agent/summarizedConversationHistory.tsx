@@ -29,8 +29,7 @@ import { Iterable } from '../../../../util/vs/base/common/iterator';
 import { StopWatch } from '../../../../util/vs/base/common/stopwatch';
 import { generateUuid } from '../../../../util/vs/base/common/uuid';
 import { IInstantiationService } from '../../../../util/vs/platform/instantiation/common/instantiation';
-import { ChatResponseProgressPart2 } from '../../../../vscodeTypes';
-import { LanguageModelTextPart, LanguageModelTextPart2 } from '../../../../vscodeTypes';
+import { ChatResponseProgressPart2, LanguageModelTextPart, LanguageModelTextPart2 } from '../../../../vscodeTypes';
 import { CompactOverrideMode, ICompactVerbatimAnchors } from '../../../compact/common/types';
 import { ToolCallingLoop } from '../../../intents/node/toolCallingLoop';
 import { IResultMetadata } from '../../../prompt/common/conversation';
@@ -185,6 +184,11 @@ function extractToolResultText(result: { content: ReadonlyArray<unknown> }): str
  * Capture the last user signal + last model thinking/reply at compaction time so
  * the post-compact prompt retains verbatim anchors. User signal priority:
  * latest ask-* tool result in current tool-call rounds, then the user query.
+ *
+ * Thinking/reply are strictly scoped to the current turn (post the most recent
+ * user signal). We do NOT fall back to prior turns' history, because anchors
+ * from a distant turn are disconnected from the most recent user intent and
+ * bloat the post-compact context without continuity value.
  */
 function extractVerbatimAnchors(promptContext: IBuildPromptContext, maxChars: number): ICompactVerbatimAnchors {
 	let lastModelThinking: string | undefined;
@@ -196,15 +200,9 @@ function extractVerbatimAnchors(promptContext: IBuildPromptContext, maxChars: nu
 		lastModelReply = last.response;
 		const t = last.thinking?.text;
 		lastModelThinking = Array.isArray(t) ? t.join('') : t;
-	} else if (promptContext.history.length > 0) {
-		const lastTurn = promptContext.history[promptContext.history.length - 1];
-		const lastRound = lastTurn.rounds[lastTurn.rounds.length - 1];
-		if (lastRound) {
-			lastModelReply = lastRound.response;
-			const t = lastRound.thinking?.text;
-			lastModelThinking = Array.isArray(t) ? t.join('') : t;
-		}
 	}
+	// If current turn has no rounds yet, there is no "model reply/thinking after
+	// the latest user signal" to preserve — leave both undefined.
 
 	let lastUserSignal: ICompactVerbatimAnchors['lastUserSignal'];
 	if (rounds && promptContext.toolCallResults) {

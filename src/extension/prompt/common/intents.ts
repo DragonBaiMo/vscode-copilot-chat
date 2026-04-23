@@ -12,11 +12,11 @@ import { createServiceIdentifier } from '../../../util/common/services';
 import { ResourceMap, ResourceSet } from '../../../util/vs/base/common/map';
 import { generateUuid } from '../../../util/vs/base/common/uuid';
 import { ChatRequest } from '../../../vscodeTypes';
+import { ICompactVerbatimAnchors } from '../../compact/common/types';
 import { getToolName } from '../../tools/common/toolNames';
 import { IToolGrouping } from '../../tools/common/virtualTools/virtualToolTypes';
 import { ChatVariablesCollection } from './chatVariablesCollection';
 import { Conversation, Turn } from './conversation';
-import { ICompactVerbatimAnchors } from '../../compact/common/types';
 
 // TODO Move these to Conversation
 export interface IToolCall {
