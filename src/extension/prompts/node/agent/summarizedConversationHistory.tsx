@@ -181,50 +181,115 @@ function extractToolResultText(result: { content: ReadonlyArray<unknown> }): str
 }
 
 /**
- * Capture the last user signal + last model thinking/reply at compaction time so
- * the post-compact prompt retains verbatim anchors. User signal priority:
- * latest ask-* tool result in current tool-call rounds, then the user query.
+ * Capture the last user→AI pair at compaction time so the post-compact prompt
+ * retains verbatim anchors of the most recent exchange.
  *
- * Thinking/reply are strictly scoped to the current turn (post the most recent
- * user signal). We do NOT fall back to prior turns' history, because anchors
- * from a distant turn are disconnected from the most recent user intent and
- * bloat the post-compact context without continuity value.
+ * Conversation state machine: the dialogue alternates user-signal ↔ AI-response.
+ * A "user signal" is either (a) the turn's opening user query, or (b) an ask-*
+ * tool result inside any round. An AI response is everything from that signal
+ * position up to (and including) the next signal — represented by the latest
+ * model thinking + reply in that range.
+ *
+ * Resolution order for locating the latest pair:
+ *   1. Latest ask-* tool result in the current turn's rounds
+ *   2. Current turn's opening query (promptContext.query)
+ *   3. Scan history backwards: ask-* tool in each turn's rounds, then that
+ *      turn's user message (request.message)
+ *
+ * The paired AI response is the final round AFTER the signal position in the
+ * same rounds array. If no subsequent round exists, thinking/reply stay
+ * undefined (user just sent a signal, model hasn't replied yet).
  */
 function extractVerbatimAnchors(promptContext: IBuildPromptContext, maxChars: number): ICompactVerbatimAnchors {
-	let lastModelThinking: string | undefined;
-	let lastModelReply: string | undefined;
+	let userSignal: ICompactVerbatimAnchors['lastUserSignal'];
+	let pairRounds: readonly IToolCallRound[] | undefined;
+	// Signal sits at rounds[signalRoundIdx]; AI response = rounds[signalRoundIdx+1 .. last].
+	// signalRoundIdx === -1 means signal is the turn's opening query; AI response = rounds[0 .. last].
+	let signalRoundIdx = -1;
 
-	const rounds = promptContext.toolCallRounds;
-	if (rounds && rounds.length > 0) {
-		const last = rounds[rounds.length - 1];
-		lastModelReply = last.response;
-		const t = last.thinking?.text;
-		lastModelThinking = Array.isArray(t) ? t.join('') : t;
-	}
-	// If current turn has no rounds yet, there is no "model reply/thinking after
-	// the latest user signal" to preserve — leave both undefined.
+	const currentRounds = promptContext.toolCallRounds;
+	const currentToolResults = promptContext.toolCallResults;
 
-	let lastUserSignal: ICompactVerbatimAnchors['lastUserSignal'];
-	if (rounds && promptContext.toolCallResults) {
-		outer: for (let i = rounds.length - 1; i >= 0 && !lastUserSignal; i--) {
-			const round = rounds[i];
+	// 1. Prefer latest ask-* tool in current turn's rounds
+	if (currentRounds && currentRounds.length > 0 && currentToolResults) {
+		outer: for (let i = currentRounds.length - 1; i >= 0; i--) {
+			const round = currentRounds[i];
 			for (let j = round.toolCalls.length - 1; j >= 0; j--) {
 				const call = round.toolCalls[j];
 				if (!call.name.toLowerCase().startsWith('ask')) { continue; }
-				const result = promptContext.toolCallResults[call.id];
+				const result = currentToolResults[call.id];
 				if (!result) { continue; }
-				const content = extractToolResultText(result);
-				lastUserSignal = { source: 'ask-tool', toolName: call.name, content: truncateAnchor(content, maxChars) };
+				userSignal = {
+					source: 'ask-tool',
+					toolName: call.name,
+					content: truncateAnchor(extractToolResultText(result), maxChars),
+				};
+				pairRounds = currentRounds;
+				signalRoundIdx = i;
 				break outer;
 			}
 		}
 	}
-	if (!lastUserSignal && promptContext.query) {
-		lastUserSignal = { source: 'direct-message', content: truncateAnchor(promptContext.query, maxChars) };
+
+	// 2. No ask-tool in current turn → use current turn's opening query
+	if (!userSignal && promptContext.query) {
+		userSignal = { source: 'direct-message', content: truncateAnchor(promptContext.query, maxChars) };
+		pairRounds = currentRounds;
+		signalRoundIdx = -1;
+	}
+
+	// 3. Current turn has neither query nor ask-tool (e.g. manual /compact) →
+	//    scan history backwards for the most recent user signal.
+	if (!userSignal) {
+		hist: for (let h = promptContext.history.length - 1; h >= 0; h--) {
+			const turn = promptContext.history[h];
+			const turnRounds = turn.rounds;
+			const histToolResults = turn.resultMetadata?.toolCallResults;
+
+			// Prefer ask-* tool within this historical turn
+			if (turnRounds.length > 0 && histToolResults) {
+				for (let i = turnRounds.length - 1; i >= 0; i--) {
+					const round = turnRounds[i];
+					for (let j = round.toolCalls.length - 1; j >= 0; j--) {
+						const call = round.toolCalls[j];
+						if (!call.name.toLowerCase().startsWith('ask')) { continue; }
+						const result = histToolResults[call.id];
+						if (!result) { continue; }
+						userSignal = {
+							source: 'ask-tool',
+							toolName: call.name,
+							content: truncateAnchor(extractToolResultText(result), maxChars),
+						};
+						pairRounds = turnRounds;
+						signalRoundIdx = i;
+						break hist;
+					}
+				}
+			}
+
+			// Otherwise fall back to this turn's opening user message
+			const msg = turn.request?.message;
+			if (typeof msg === 'string' && msg.length > 0) {
+				userSignal = { source: 'direct-message', content: truncateAnchor(msg, maxChars) };
+				pairRounds = turnRounds;
+				signalRoundIdx = -1;
+				break hist;
+			}
+		}
+	}
+
+	// 4. Pair the AI response: latest round strictly AFTER the signal position.
+	let lastModelThinking: string | undefined;
+	let lastModelReply: string | undefined;
+	if (pairRounds && pairRounds.length > signalRoundIdx + 1) {
+		const last = pairRounds[pairRounds.length - 1];
+		lastModelReply = last.response;
+		const t = last.thinking?.text;
+		lastModelThinking = Array.isArray(t) ? t.join('') : t;
 	}
 
 	return {
-		lastUserSignal,
+		lastUserSignal: userSignal,
 		lastModelThinking: lastModelThinking ? truncateAnchor(lastModelThinking, maxChars) : undefined,
 		lastModelReply: lastModelReply ? truncateAnchor(lastModelReply, maxChars) : undefined,
 	};
