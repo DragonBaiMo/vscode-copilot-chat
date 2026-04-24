@@ -8,15 +8,39 @@ import { IAuthenticationService } from '../../authentication/common/authenticati
 import { IHeaders } from '../../networking/common/fetcherService';
 import { CopilotUserQuotaInfo, IChatQuota, IChatQuotaService, QuotaSnapshots } from './chatQuotaService';
 
+/**
+ * Throttle window for non-exhausted quota updates. While quota remains > 0 we only
+ * refresh `_quotaInfo` at most once per window. This dampens repeated "weekly rate
+ * limit" banners rendered by VS Code core from the same snapshot data. Exhausted
+ * states (percent_remaining <= 0) are never throttled.
+ */
+const QUOTA_UPDATE_COOLDOWN_MS = 24 * 60 * 60 * 1000; // 24h
+
 export class ChatQuotaService extends Disposable implements IChatQuotaService {
 	declare readonly _serviceBrand: undefined;
 	private _quotaInfo: IChatQuota | undefined;
+	private _lastUpdatedAt = 0;
 
 	constructor(@IAuthenticationService private readonly _authService: IAuthenticationService) {
 		super();
 		this._register(this._authService.onDidAuthenticationChange(() => {
 			this.processUserInfoQuotaSnapshot(this._authService.copilotToken?.quotaInfo);
 		}));
+	}
+
+	/**
+	 * Returns true when a fresh update should be suppressed because quota is not
+	 * exhausted and we already accepted an update inside the cooldown window.
+	 * First-ever update (`_quotaInfo === undefined`) always passes through.
+	 */
+	private shouldThrottle(percentRemaining: number): boolean {
+		if (this._quotaInfo === undefined) {
+			return false;
+		}
+		if (percentRemaining <= 0) {
+			return false;
+		}
+		return Date.now() - this._lastUpdatedAt < QUOTA_UPDATE_COOLDOWN_MS;
 	}
 
 	get quotaExhausted(): boolean {
@@ -35,6 +59,7 @@ export class ChatQuotaService extends Disposable implements IChatQuotaService {
 
 	clearQuota(): void {
 		this._quotaInfo = undefined;
+		this._lastUpdatedAt = 0;
 	}
 
 	processQuotaHeaders(headers: IHeaders): void {
@@ -53,6 +78,10 @@ export class ChatQuotaService extends Disposable implements IChatQuotaService {
 			const overageEnabled = params.get('ovPerm') === 'true';
 			const percentRemaining = parseFloat(params.get('rem') || '0.0');
 			const resetDateString = params.get('rst');
+
+			if (this.shouldThrottle(percentRemaining)) {
+				return;
+			}
 
 			let resetDate: Date;
 			if (resetDateString) {
@@ -75,6 +104,7 @@ export class ChatQuotaService extends Disposable implements IChatQuotaService {
 				overageEnabled,
 				resetDate
 			};
+			this._lastUpdatedAt = Date.now();
 		} catch (error) {
 			console.error('Failed to parse quota header', error);
 		}
@@ -89,6 +119,10 @@ export class ChatQuotaService extends Disposable implements IChatQuotaService {
 		}
 
 		try {
+			if (this.shouldThrottle(snapshot.percent_remaining)) {
+				return;
+			}
+
 			const entitlement = parseInt(snapshot.entitlement, 10);
 			const resetDate = snapshot.reset_date ? new Date(snapshot.reset_date) : (() => { const d = new Date(); d.setMonth(d.getMonth() + 1); return d; })();
 			const used = Math.max(0, entitlement * (1 - snapshot.percent_remaining / 100));
@@ -101,6 +135,7 @@ export class ChatQuotaService extends Disposable implements IChatQuotaService {
 				overageEnabled: snapshot.overage_permitted,
 				resetDate
 			};
+			this._lastUpdatedAt = Date.now();
 		} catch (error) {
 			console.error('Failed to process quota snapshots', error);
 		}
@@ -110,13 +145,18 @@ export class ChatQuotaService extends Disposable implements IChatQuotaService {
 		if (!quotaInfo || !quotaInfo.quota_snapshots || !quotaInfo.quota_reset_date) {
 			return;
 		}
+		const premium = quotaInfo.quota_snapshots.premium_interactions;
+		if (this.shouldThrottle(premium.percent_remaining)) {
+			return;
+		}
 		this._quotaInfo = {
-			unlimited: quotaInfo.quota_snapshots.premium_interactions.unlimited,
-			overageEnabled: quotaInfo.quota_snapshots.premium_interactions.overage_permitted,
-			overageUsed: quotaInfo.quota_snapshots.premium_interactions.overage_count,
-			quota: quotaInfo.quota_snapshots.premium_interactions.entitlement,
+			unlimited: premium.unlimited,
+			overageEnabled: premium.overage_permitted,
+			overageUsed: premium.overage_count,
+			quota: premium.entitlement,
 			resetDate: new Date(quotaInfo.quota_reset_date),
-			used: Math.max(0, quotaInfo.quota_snapshots.premium_interactions.entitlement * (1 - quotaInfo.quota_snapshots.premium_interactions.percent_remaining / 100)),
+			used: Math.max(0, premium.entitlement * (1 - premium.percent_remaining / 100)),
 		};
+		this._lastUpdatedAt = Date.now();
 	}
 }
